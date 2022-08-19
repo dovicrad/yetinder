@@ -4,6 +4,7 @@ use App\Entity\Address;
 use App\Entity\City;
 use App\Entity\Country;
 use App\Entity\Rating;
+use PhpParser\Node\Expr\Cast\Object_;
 use Twig\Environment;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Routing\Annotation\Route;
@@ -23,61 +24,126 @@ class YetiController extends AbstractController
      */
     public function index(Request $request, EntityManagerInterface $entityManager,ChartBuilderInterface $chartBuilder): Response
     {
+        //get session
         $session = $request->getSession();
 
+        //get array of every yeti id in the database
         $availableYetiIds = $entityManager->createQueryBuilder()
             ->select("yeti.id")
             ->from(Yeti::class, "yeti")
             ->getQuery()->getSingleColumnResult();
 
+        //get previously rated yeti ids
         $idHistory = $session->get("idHistory");
         $previousYetiId = $request->get('yetiId');
 
-        if(!is_null($previousYetiId) && in_array($previousYetiId, $availableYetiIds) && abs($request->get('value') == 1))
+        //check if valid rating has occurred
+        if(!is_null($previousYetiId) && in_array($previousYetiId, $availableYetiIds))
         {
-            $rating = new Rating();
-            $rating->setYeti($this->getYetiById($entityManager, $previousYetiId));
-            $rating->setValue($request->get('value'));
-            $rating->setDate(new \DateTime());
+            $ratingValue = $request->get('value');
+            if($ratingValue == 1 || $ratingValue == -1){
+                //create new rating and set its data
+                $rating = new Rating();
+                $rating->setYeti($this->getYetiById($entityManager, $previousYetiId));
+                $rating->setValue($ratingValue);
+                $rating->setDate(new \DateTime());
 
-            $entityManager->persist($rating);
-            $entityManager->flush();
+                //push rating to database
+                $entityManager->persist($rating);
+                $entityManager->flush();
 
-            $idHistory[] = $previousYetiId;
-            $session->set("idHistory",$idHistory);
+                //add just rated id to history in session
+                $idHistory[] = $previousYetiId;
+                $session->set("idHistory",$idHistory);
+            }
         }
 
-        $isIdValid = false;
-        $newYetiId = $this->pickNewYetiId($)
-        while(!$isIdValid)
-        {
-            $newYetiId = null;
-            if(count($availableYetiIds) == 0){
-                break;
-            }
+        //get new "your match" yeti
+        $newYetiId = $this->pickNewYetiId($availableYetiIds, $idHistory);
+        $newYeti = $this->getYetiById($entityManager, $newYetiId);
 
+        //check if request is ajax
+        if($request->isXmlHttpRequest()){
+            //send ajax response
+            return new JsonResponse(json_encode($newYeti?->toDictionary()));
+        }
+
+        //get leaderboard
+        $leaderboard = $this->getYetiLeaderBoard($entityManager);
+
+        //get statistics chart
+        $chart = $this->getRatingChart($entityManager, $chartBuilder);
+        //render view
+        return $this->render('yetinder.html.twig', ['yeti' => $newYeti?->toDictionary(), 'leaderboard' => $leaderboard, 'chart' => $chart,]);
+    }
+
+    /**
+     * @Route("/newYeti")
+     */
+    public function newYetiForm(Environment $twig, Request $request, EntityManagerInterface $entityManager): Response
+    {
+        //create yeti entity
+        $yeti = new Yeti();
+
+        //create form
+        $form = $this->createForm(YetiFormType::class,$yeti);
+        $form->handleRequest($request);
+
+        //check for valid form submission
+        if ($form->isSubmitted() && $form->isValid()){
+            //alter entity and link foreign keys
+            $yeti->linkAddressToExistingForeignKeys($entityManager);
+
+            //alter entity and change image path
+            $yeti->setImage($this->moveImage($form->get('image')->getData()));
+
+            //push yeti to database
+            $entityManager->persist($yeti);
+            $entityManager->flush();
+
+            //redirect to index
+            return $this->redirect('/');
+        }
+
+        //render view
+        return new Response($twig->render('newyeti.html.twig',['form'=> $form->createView()]));
+    }
+
+    /**
+     * @param $availableYetiIds array of all possible ids
+     * @param $idHistory null|array of all previously used ids
+     * @return null|mixed returns either id which is not in history or null
+     */
+    public function pickNewYetiId(array $availableYetiIds, ?array $idHistory): ?String
+    {
+        $toBeChecked = count($availableYetiIds);
+        //while every yeti has not been checked
+        while($toBeChecked > 0)
+        {
+            $toBeChecked--;
+
+            //select random id and remove it from array
             $newYetiIdIndex = rand(0,count($availableYetiIds)-1);
             $newYetiId = $availableYetiIds[$newYetiIdIndex];
             array_splice($availableYetiIds, $newYetiIdIndex, 1);
+
+            //check if picked id is valid
             if($idHistory == null || !in_array($newYetiId,$idHistory)){
-                $isIdValid = true;
+                return $newYetiId;
             }
         }
-
-        $newYeti = $this->getYetiById($entityManager, $newYetiId);
-        $leaderboard = $this->getYetiLeaderBoard($entityManager);
-
-        if($request->isXmlHttpRequest()){
-            return new JsonResponse(json_encode($newYeti->toDictionary()));
-        }
-
-        $chart = $chartBuilder->createChart(Chart::TYPE_LINE);
-        $this->getRatingChart($entityManager, $chart);
-
-        return $this->render('yetinder.html.twig', ['yeti' => $newYeti->toDictionary(), 'leaderboard' => $leaderboard, 'chart' => $chart,]);
+        return null;
     }
 
-    public function getRatingChart($entityManager, $chart){
+    /**
+     * @param $entityManager
+     * @param $chartBuilder
+     * @return Object object filled with data
+     */
+    public function getRatingChart($entityManager, $chartBuilder): Object
+    {
+        $chart = $chartBuilder->createChart(Chart::TYPE_LINE);
+        //get data from database
         $ratingData = $entityManager->createQueryBuilder()
             ->setMaxResults(30)
             ->select('Count(rating.id) as ratingCount, Sum(rating.value) as ratingVal, day(rating.date) as day,month(rating.date) as month,year(rating.date) as year')
@@ -88,12 +154,12 @@ class YetiController extends AbstractController
             ->orderBy('rating.date')
             ->getQuery()->getResult();
 
+        //create and fill arrays with data
         $labels = array();
         $data = array();
         $dataPos = array();
         $dataNeg = array();
         foreach ($ratingData as $day){
-
             $labels[] = $day["day"] .'. '. $day["month"].".";
 
             $data[] = $day["ratingCount"];
@@ -101,6 +167,7 @@ class YetiController extends AbstractController
             $dataNeg[] = $day["ratingCount"]/2 - $day["ratingVal"]/2;
         }
 
+        //chart setup
         $chart->setData([
             'labels' => $labels,
             'datasets' => [
@@ -124,12 +191,20 @@ class YetiController extends AbstractController
                 ]
             ],
         ]);
+        return $chart;
     }
 
-    public function getYetiLeaderBoard($entityManager){
+    /**
+     * @param $entityManager
+     * @return Array of 10 yetis with the greatest rating value
+     */
+    public function getYetiLeaderBoard($entityManager): Array
+    {
+        //get timestamp boundaries of current week
         $weekStart =  date("Y-m-d", strtotime("this week")) . ' 00:00:00';
         $now =  date("Y-m-d H:i:s");
 
+        //execute query to get result array
         return $entityManager->createQueryBuilder()
             ->setMaxResults(10)
             ->select('SUM(rating.value) as ratingVal, yeti')
@@ -143,7 +218,13 @@ class YetiController extends AbstractController
             ->getQuery()->getScalarResult();
     }
 
-    public function getYetiById($entityManager, $yetiId){
+    /**
+     * @param $entityManager
+     * @param $yetiId mixed desired yeti id
+     * @return Object|null yeti entity  or null if not found
+     */
+    public function getYetiById($entityManager, mixed $yetiId): ?Object
+    {
         if($yetiId != null){
             $yetiQuery = $entityManager->createQueryBuilder()
                 ->select("yeti, address, city, country")
@@ -160,84 +241,19 @@ class YetiController extends AbstractController
     }
 
     /**
-     * @Route("/newYeti")
+     * @param $imageFile
+     * @return null|String path to image after moving
      */
-    public function newYetiForm(Environment $twig, Request $request, EntityManagerInterface $entityManager): Response
+    public function moveImage($imageFile): ?String
     {
-        $yeti = new Yeti();
-
-        $form = $this->createForm(YetiFormType::class,$yeti);
-        $form->handleRequest($request);
-
-        if ($form->isSubmitted() && $form->isValid()){
-            $yeti = $this->linkAddressToExistingForeignKeys($entityManager, $yeti);
-            $yeti->setImage($this->moveImage($form->get('image')->getData()));
-
-
-            $entityManager->persist($yeti);
-            $entityManager->flush();
-            return $this->redirect('/');
+        $newFilename = null;
+        if($imageFile != null){
+            $newFilename = date('Ymd-His').'_'.rand(10000,99999).'.'.$imageFile->guessExtension();
+            $imageFile->move(
+                $this->getParameter('yeti_directory'),
+                $newFilename
+            );
         }
-
-
-        return new Response($twig->render('newyeti.html.twig',['form'=> $form->createView()]));
-    }
-
-    public function moveImage($imageFile): string
-    {
-        $newFilename = date('Ymd-His').'_'.rand(10000,99999).'.'.$imageFile->guessExtension();
-        $imageFile->move(
-            $this->getParameter('yeti_directory'),
-            $newFilename
-        );
         return $newFilename;
-    }
-
-    public function linkAddressToExistingForeignKeys($entityManager, $yeti){
-        $formCityName = $yeti->getAddress()->getCity()->getName();
-        $formCountryName = $yeti->getAddress()->getCity()->getCountry()->getName();
-
-        $databaseCity = $this->getDatabaseCity($entityManager, $formCityName);
-        $existingCity = false;
-        if($databaseCity != null){
-            if($databaseCity->getCountry()->getName() == $formCountryName){
-                $yeti->getAddress()->setCity($databaseCity);
-                $existingCity = true;
-            }
-            
-        }
-        if(!$existingCity ){
-            $databaseCountry = $this->getDatabaseCountry($entityManager, $formCountryName);
-            if($databaseCountry != null){
-                $yeti->getAddress()->getCity()->setCountry($databaseCountry);
-            }
-        }
-        return $yeti;
-    }
-
-    public function getDatabaseCountry($entityManager, $inputCountry){
-        $databaseCountries = $entityManager->createQuery(
-            "Select country
-                from App\Entity\Country country
-                where country.name = '". $inputCountry ."'"
-        )->getResult();
-
-        if(count($databaseCountries) >= 1){
-            return $databaseCountries[0];
-        }
-        return null;
-    }
-
-    public function getDatabaseCity($entityManager, $inputCity){
-        $databaseCities = $entityManager->createQuery(
-            "Select city
-                from App\Entity\City city
-                where city.name = '". $inputCity ."'"
-        )->getResult();
-
-        if(count($databaseCities) >= 1){
-            return $databaseCities[0];
-        }
-        return null;
     }
 }
