@@ -1,0 +1,131 @@
+{% extends 'base.html.twig' %}
+
+{% block content %}
+    <script
+    src="https://code.jquery.com/jquery-3.6.0.js"
+    integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk="
+    crossorigin="anonymous">
+    </script>
+
+
+    <script>
+        $(document).ready(function(){
+            $("#submitDownRating").on("click", function(event){
+                ajaxCall(-1);
+            });
+            $("#submitUpRating").on("click", function(event){
+                ajaxCall(1);
+            });
+        });
+
+        function ajaxCall(value){
+            $.ajax({
+                url:'/',
+                type:'POST',
+                data: {
+                    yetiId: $('#yetiId').val(),
+                    value: value
+                },
+                dataType:   'json',
+                async:      true,
+
+                success: function(data) {
+                    let yeti = $.parseJSON(data);
+                    if(yeti == null){
+                        $('#noMoreYetiError').removeClass( "d-none");
+                        $('#yeti').addClass( "d-none");
+                }
+                    else{
+                        $('#yetiId').val(yeti['yeti_id']);
+                        $('#yetiName').html(yeti['yeti_firstName'] + " " + yeti['yeti_lastName']);
+                        $('#yetiHeight').html("height: " + yeti['yeti_height']);
+                        $('#yetiWeight').html("weight: " + yeti['yeti_weight']);
+                        $('#yetiResidence').html("seen at: " + yeti['city_name'] + " - " + yeti['country_name']);
+                        $('#yetiRating').html(yeti['yeti_rating']);
+                    }
+                },
+                error : function() {
+                    alert('Ajax request failed.');
+                }
+            });
+        }
+    </script>
+
+    <div class="text-center pb-5">
+        <h2 id="matches" class="">Your match</h2>
+        <div class="row d-flex justify-content-around">
+            {% if yeti %}
+                <div id="yeti" class="col col-sm-8 col-md-6 col-lg-4">
+                    <div class="card mb-4 rounded-3 shadow-sm">
+                        <img class="rounded-top rounded-3" src="
+                        {% if yeti.yeti_image %}
+                            {{ asset('uploads/yetiImages/' ~ yeti.yeti_image) }}
+                        {% else %}
+                            https://img.freepik.com/free-vector/hand-drawn-yeti-abominable-snowman-illustration_52683-56429.jpg?w=2000
+                        {% endif %}">
+                        <div class="card-body">
+                            <input type="hidden" id="yetiId" value="{{ yeti.yeti_id }}">
+                            <h1 id="yetiName" class="card-title pricing-card-title">{{yeti.yeti_firstName}} {{yeti.yeti_lastName}}</h1>
+                            <ul class="list-unstyled mt-3 mb-4">
+                                <li id="yetiHeight">height: {{ yeti.yeti_height }} cm</li>
+                                <li id="yetiWeight">weight: {{ yeti.yeti_weight }} kg</li>
+                                <li id="yetiResidence">seen at: {{ yeti.city_name}} - {{ yeti.country_name }}</li>
+                            </ul>
+                            <div class="row-11 d-flex justify-content-around border-top">
+                                <button id="submitUpRating" type="button" class="col btn btn rounded-0 rounded-start">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24"><path d="M0 16.67l2.829 2.83 9.175-9.339 9.167 9.339 2.829-2.83-11.996-12.17z"/></svg>
+                                </button>
+                                <div id="yetiRating" class="col text-center fs-4 ">{{ yeti.yeti_rating }}</div>
+                                <button id="submitDownRating" type="button" class="col btn rounded-0 rounded-end">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24"><path d="M0 7.33l2.829-2.83 9.175 9.339 9.167-9.339 2.829 2.83-11.996 12.17z"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+            <div id="noMoreYetiError" class="{% if yeti %}d-none{% endif %} fs-4 text-center p-5" >
+                you have rated every yeti there is.<br>
+                thank you !
+            </div>
+        </div>
+    </div>
+
+    <div class="text-center border-top p-5">
+        <h2 id="leaderboard" class="display-6 mb-4">Leaderboard</h2>
+        {% if leaderboard %}
+        <table class="table caption-top col-8">
+            <caption>leaderboard is refreshed every weak.</caption>
+            <thead>
+            <tr>
+                <th scope="col">#</th>
+                <th scope="col">First name</th>
+                <th scope="col">Last name</th>
+                <th scope="col">Score</th>
+            </tr>
+            </thead>
+            <tbody>
+                {% for yeti in leaderboard %}
+                    <tr>
+                        <th scope="row">{{ loop.index}}</th>
+                        <td>{{yeti.yeti_firstName}}</td>
+                        <td>{{yeti.yeti_lastName}}</td>
+                        <td>{{yeti.ratingVal}}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+            <div class="fs-4 text-center" >
+                There are no ratings this week.
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="text-center border-top pt-5">
+        <h2 id="statistics" class="display-6 mb-4">Statistics</h2>
+        {{ render_chart(chart) }}
+    </div>
+
+
+{% endblock %}
