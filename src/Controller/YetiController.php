@@ -4,7 +4,7 @@ use App\Entity\Address;
 use App\Entity\City;
 use App\Entity\Country;
 use App\Entity\Rating;
-use PhpParser\Node\Expr\Cast\Object_;
+use DateTime;
 use Twig\Environment;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Routing\Annotation\Route;
@@ -45,8 +45,9 @@ class YetiController extends AbstractController
                 //create new rating and set its data
                 $rating = new Rating();
                 $rating->setYeti($this->getYetiById($entityManager, $previousYetiId));
+                $rating->setYeti($this->getYetiById($entityManager, $previousYetiId));
                 $rating->setValue($ratingValue);
-                $rating->setDate(new \DateTime());
+                $rating->setDate(new DateTime());
 
                 //push rating to database
                 $entityManager->persist($rating);
@@ -221,9 +222,9 @@ class YetiController extends AbstractController
     /**
      * @param $entityManager
      * @param $yetiId mixed desired yeti id
-     * @return Object|null yeti entity  or null if not found
+     * @return Yeti|null yeti entity  or null if not found
      */
-    public function getYetiById($entityManager, mixed $yetiId): ?Object
+    public function getYetiById($entityManager, mixed $yetiId): ?Yeti
     {
         if($yetiId != null){
             $yetiQuery = $entityManager->createQueryBuilder()
